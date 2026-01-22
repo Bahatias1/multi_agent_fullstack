@@ -1,22 +1,31 @@
-from collections import defaultdict, deque
+import uuid
+from typing import Dict, List
 
-# nombre maximum de messages conservés par session
-MAX_MESSAGES = 8
+# Mémoire en RAM (simple)
+# Tu pourras remplacer par SQLite plus tard
+_sessions: Dict[str, List[str]] = {}
 
-# mémoire en RAM (simple, rapide, suffisant pour l’instant)
-_sessions = defaultdict(lambda: deque(maxlen=MAX_MESSAGES))
+
+def create_session() -> str:
+    session_id = str(uuid.uuid4())
+    _sessions[session_id] = []
+    return session_id
+
+
+def list_sessions() -> List[str]:
+    return list(_sessions.keys())
+
+
+def add_to_session(session_id: str, text: str):
+    if session_id not in _sessions:
+        _sessions[session_id] = []
+    _sessions[session_id].append(text)
+
+
+def get_session_messages(session_id: str) -> List[str]:
+    return _sessions.get(session_id, [])
 
 
 def get_session_history(session_id: str) -> str:
-    """
-    Retourne l’historique formaté pour injection dans le prompt
-    """
-    history = _sessions.get(session_id, [])
-    return "\n".join(history)
-
-
-def add_to_session(session_id: str, message: str) -> None:
-    """
-    Ajoute un message à la mémoire de la session
-    """
-    _sessions[session_id].append(message)
+    msgs = _sessions.get(session_id, [])
+    return "\n".join(msgs[-20:])  # garde les 20 derniers

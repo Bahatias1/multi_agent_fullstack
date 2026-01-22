@@ -1,31 +1,51 @@
 import requests
-from crewai.llm import BaseLLM
+from typing import Optional
 
-class LocalAPILLM(BaseLLM):
-    def __init__(self, api_url: str, language: str = "fr"):
-        super().__init__(model="local-api")  # important pour CrewAI
+
+class LocalAPILLM:
+    def __init__(
+        self,
+        api_url: str,
+        token: str,
+        language: str = "français",
+        max_tokens: int = 512,
+        session_id: Optional[str] = None,
+        timeout: int = 60,
+    ):
         self.api_url = api_url
+        self.token = token
         self.language = language
+        self.max_tokens = max_tokens
+        self.session_id = session_id
+        self.timeout = timeout
 
-    def call(self, prompt: str, **kwargs) -> str:
-        if not isinstance(prompt, str) or not prompt.strip():
-            prompt = "Explique clairement."
-
+    def call(self, prompt: str) -> str:
         payload = {
-    "prompt": str(prompt),
-    "language": self.language,
-    "max_tokens": 600
-}
+            "prompt": prompt,
+            "language": self.language,
+            "max_tokens": self.max_tokens,
+            "session_id": self.session_id,
+        }
 
-        session = requests.Session()
-        session.trust_env = False  # 🔥 ignore proxy Windows
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
+        }
 
-        response = session.post(
+        res = requests.post(
             self.api_url,
             json=payload,
-            timeout=600,
-            proxies={"http": None, "https": None}  # 🔥 force no proxy
+            headers=headers,
+            timeout=self.timeout,
         )
 
-        response.raise_for_status()
-        return response.json()["result"]
+        if res.status_code >= 400:
+            raise Exception(f"API error {res.status_code}: {res.text}")
+
+        data = res.json()
+
+        # Met à jour session_id automatiquement
+        if "session_id" in data and data["session_id"]:
+            self.session_id = data["session_id"]
+
+        return data.get("result", "")

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
+import uuid
 
 from ai_api.deps import get_db
 from ai_api.models import User
@@ -47,15 +48,15 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Identifiants invalides")
 
     token = create_access_token({"sub": user.email})
-    return TokenResponse(access_token=token)
+
+    # ✅ session_id optionnel (pratique pour démarrer direct une session côté UI)
+    session_id = str(uuid.uuid4())
+
+    return TokenResponse(access_token=token, session_id=session_id)
 
 
-def get_current_user_email(token: str = Depends(oauth2_scheme)):
+def get_current_user_email(token: str = Depends(oauth2_scheme)) -> str:
     email = decode_token(token)  # decode_token retourne déjà l'email (string)
-    if not email:
-        raise HTTPException(status_code=401, detail="Token invalide ou expiré")
-    return email
-
 
     if not email or not isinstance(email, str):
         raise HTTPException(status_code=401, detail="Token invalide ou expiré")
