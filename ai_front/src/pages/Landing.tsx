@@ -1,6 +1,11 @@
 import React from "react";
 
-export default function Landing({ onOpenConsole }: { onOpenConsole: () => void }) {
+type Props = {
+  onOpenConsole: () => void;
+  onGetStarted: () => void;
+};
+
+export default function Landing({ onOpenConsole, onGetStarted }: Props) {
   return (
     <div style={styles.page}>
       <div style={styles.bgGlow1} />
@@ -27,7 +32,7 @@ export default function Landing({ onOpenConsole }: { onOpenConsole: () => void }
           <button style={styles.btnGhost} onClick={onOpenConsole}>
             Open Console
           </button>
-          <button style={styles.btnPrimary} onClick={onOpenConsole}>
+          <button style={styles.btnPrimary} onClick={onGetStarted}>
             Get Started
           </button>
         </div>
@@ -250,7 +255,7 @@ export default function Landing({ onOpenConsole }: { onOpenConsole: () => void }
             <div>
               <div style={styles.footerTitle}>Console</div>
               <button style={styles.footerBtn} onClick={onOpenConsole}>Open Console</button>
-              <button style={styles.footerBtnSoft} onClick={onOpenConsole}>Get Started</button>
+              <button style={styles.footerBtnSoft} onClick={onGetStarted}>Get Started</button>
             </div>
           </div>
         </div>
@@ -525,7 +530,8 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid rgba(34,211,238,0.25)",
     background: "rgba(34,211,238,0.10)",
     color: "rgba(34,211,238,0.95)",
-  },mockBody: { padding: 14, display: "flex", flexDirection: "column", gap: 12 },
+  },
+  mockBody: { padding: 14, display: "flex", flexDirection: "column", gap: 12 },
 
   chatLineUser: { display: "flex", gap: 10, justifyContent: "flex-end" },
   chatLineBot: { display: "flex", gap: 10, justifyContent: "flex-start" },
@@ -684,7 +690,8 @@ const styles: Record<string, React.CSSProperties> = {
     width: 44,
     height: 44,
     borderRadius: 16,
-    display: "grid",placeItems: "center",
+    display: "grid",
+    placeItems: "center",
     fontWeight: 950,
     background: "rgba(99,102,241,0.16)",
     border: "1px solid rgba(99,102,241,0.20)",

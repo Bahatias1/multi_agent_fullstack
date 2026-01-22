@@ -1,3 +1,4 @@
+// ai_front/src/api.ts
 /// <reference types="vite/client" />
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
@@ -63,6 +64,18 @@ export type SessionDetailResponse = {
   messages: string[];
 };
 
+/* =========================
+   ✅ AUTH
+   ========================= */
+
+export async function register(email: string, password: string): Promise<{ ok: boolean }> {
+  return apiFetch("/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
 export async function login(email: string, password: string): Promise<LoginResponse> {
   return apiFetch("/login", {
     method: "POST",
@@ -70,6 +83,10 @@ export async function login(email: string, password: string): Promise<LoginRespo
     body: JSON.stringify({ email, password }),
   });
 }
+
+/* =========================
+   ✅ GENERATE / CONTINUE
+   ========================= */
 
 export async function generateText(
   token: string,
@@ -224,5 +241,33 @@ export async function listFiles(token: string): Promise<ListFilesResponse> {
     headers: {
       Authorization: `Bearer ${token}`,
     },
+  });
+}
+
+export type ProfileResponse = {
+  email: string;
+  default_agent: AgentName;
+};
+
+export async function getProfile(token: string): Promise<ProfileResponse> {
+  return apiFetch("/profile", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
+export async function updateProfile(
+  token: string,
+  default_agent: AgentName
+): Promise<ProfileResponse> {
+  return apiFetch("/profile", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ default_agent }),
   });
 }
