@@ -52,3 +52,21 @@ class CreateFileResponse(BaseModel):
 
 class ListFilesResponse(BaseModel):
     files: list[str]
+
+# ai_api/schemas.py
+from pydantic import BaseModel
+
+class ReadFileRequest(BaseModel):
+    path: str
+
+class ReadFileResponse(BaseModel):
+    ok: bool = True
+    path: str
+    content: str
+
+class DeleteFileRequest(BaseModel):
+    path: str
+
+class DeleteFileResponse(BaseModel):
+    ok: bool = True
+    path: str

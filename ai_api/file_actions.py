@@ -1,3 +1,4 @@
+# ai_api/file_actions.py
 import os
 from pathlib import Path
 
@@ -10,7 +11,7 @@ def ensure_workspace():
 
 def safe_path(relative_path: str) -> Path:
     """
-    Empêche d'écrire en dehors de workspace/
+    Empêche d'écrire/lire en dehors de workspace/
     """
     ensure_workspace()
 
@@ -31,6 +32,25 @@ def write_file(relative_path: str, content: str) -> str:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content or "", encoding="utf-8")
     return str(p)
+
+
+def read_file(relative_path: str) -> str:
+    p = safe_path(relative_path)
+    if not p.exists():
+        raise ValueError("Fichier introuvable")
+    if p.is_dir():
+        raise ValueError("Chemin pointe vers un dossier")
+    return p.read_text(encoding="utf-8")
+
+
+def delete_file(relative_path: str) -> bool:
+    p = safe_path(relative_path)
+    if not p.exists():
+        raise ValueError("Fichier introuvable")
+    if p.is_dir():
+        raise ValueError("Chemin pointe vers un dossier")
+    p.unlink()
+    return True
 
 
 def list_files() -> list[str]:

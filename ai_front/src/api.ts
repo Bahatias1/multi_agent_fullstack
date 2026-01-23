@@ -275,3 +275,31 @@ export async function updateProfile(
     body: JSON.stringify({ default_agent }),
   });
 }
+
+export type ReadFileResponse = {
+  ok: boolean;
+  path: string;
+  content: string;
+};
+
+export async function readFile(token: string, path: string): Promise<ReadFileResponse> {
+  return apiFetch("/files/read", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ path }),
+  });
+}
+
+export async function deleteFile(token: string, path: string): Promise<{ ok: boolean; path: string }> {
+  return apiFetch("/files/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ path }),
+  });
+}

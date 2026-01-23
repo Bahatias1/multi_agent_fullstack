@@ -1,8 +1,12 @@
+# ai_api/main.py
+
 from ai_api.tools import TOOLS
 from ai_api.schemas import CreateFileRequest, CreateFileResponse, ListFilesResponse
 from ai_api.file_actions import write_file, list_files
+
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+
 from ai_api.auth.routes import router as auth_router
 from ai_api.auth.routes import get_current_user_email
 
@@ -58,9 +62,16 @@ def estimate_tokens(text: str) -> int:
 
 
 def clean_output(text: str) -> str:
+    """
+    Nettoyage agressif des sorties modèle:
+    - retire salutations, préfixes "Agent:", "AI:", etc.
+    - retire questions parasites
+    - coupe les phrases de type "Comment puis-je..."
+    """
     if not text:
         return text
 
+    # Nettoyage des lignes vides
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     if not lines:
         return text.strip()
@@ -89,21 +100,23 @@ def clean_output(text: str) -> str:
         "laisse-moi",
     ]
 
-    # Supprimer les lignes de démarrage "parasites"
+    # Supprimer les lignes de démarrage parasites
     while lines:
         low = lines[0].lower()
+
         if any(low.startswith(x) for x in bad_prefixes):
             lines.pop(0)
             continue
-        # supprimer aussi si la ligne commence par "Agent:" ou "AI:"
+
         if low.startswith("agent:") or low.startswith("ai:") or low.startswith("assistant:"):
             lines.pop(0)
             continue
+
         break
 
     cleaned = "\n".join(lines).strip()
 
-    # Si ça finit par une question du modèle, on coupe
+    # Supprimer phrases parasites en plein milieu
     endings_to_remove = [
         "que voulez-vous que je réponde",
         "que veux-tu que je réponde",
@@ -116,33 +129,27 @@ def clean_output(text: str) -> str:
     low_cleaned = cleaned.lower()
     for end in endings_to_remove:
         if end in low_cleaned:
-            # on garde uniquement avant la phrase parasite
             idx = low_cleaned.find(end)
+            cleaned = cleaned[:idx].strip()
+            low_cleaned = cleaned.lower()
+            break
+
+    # Couper si le modèle commence à "interviewer" l'utilisateur
+    kill_phrases = [
+        "comment puis-je",
+        "comment je peux",
+        "qu'est ce que vous aimeriez",
+        "que souhaitez-vous",
+        "veuillez",
+    ]
+
+    low_cleaned = cleaned.lower()
+    for k in kill_phrases:
+        if k in low_cleaned:
+            idx = low_cleaned.find(k)
             cleaned = cleaned[:idx].strip()
             break
 
-    return cleaned if cleaned else text.strip()
-
-    if not text:
-        return text
-
-    bad_starts = [
-        "bonjour!",
-        "salut",
-        "je vous",
-        "comment pouvons",
-        "laissez moi",
-        "t-es",
-    ]
-
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    if not lines:
-        return text.strip()
-
-    while lines and any(lines[0].lower().startswith(x) for x in bad_starts):
-        lines.pop(0)
-
-    cleaned = "\n".join(lines).strip() if lines else text.strip()
     return cleaned if cleaned else text.strip()
 
 
@@ -224,7 +231,7 @@ Question :
         raise HTTPException(status_code=500, detail=f"Ollama error: {repr(e)}")
 
     result = clean_output(result)
-    
+
     add_to_session(session_id, f"USER: {request.prompt.strip()}")
     add_to_session(session_id, f"AI: {result.strip()}")
 
@@ -311,6 +318,16 @@ def orchestrate(
     agent = request.agent
     if agent == "auto":
         agent = pick_agent(request.prompt)
+
+    # ✅ si l'utilisateur dit juste "salut", on bloque le blabla
+    small = request.prompt.strip().lower()
+    if small in ["salut", "bonjour", "hello", "yo", "hey", "coucou"]:
+        return OrchestrateResponse(
+            agent=agent,
+            result="TÂCHE MANQUANTE.",
+            truncated=False,
+            session_id=session_id
+        )
 
     history = get_session_history(session_id)
     system_prompt = system_prompt_for(agent, request.language)
