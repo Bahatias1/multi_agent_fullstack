@@ -1,5 +1,9 @@
 from pydantic import BaseModel
 from typing import Optional, Literal
+from ai_api.db import SessionLocal
+from ai_api.models import User
+from ai_api.auth.schemas import ProfileResponse, UpdateProfileRequest
+
 
 
 class GenerateRequest(BaseModel):

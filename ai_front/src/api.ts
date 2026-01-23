@@ -68,13 +68,17 @@ export type SessionDetailResponse = {
    ✅ AUTH
    ========================= */
 
-export async function register(email: string, password: string): Promise<{ ok: boolean }> {
-  return apiFetch("/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-}
+   export async function register(
+    email: string,
+    password: string,
+    default_agent: AgentName = "auto"
+  ): Promise<{ ok: boolean }> {
+    return apiFetch("/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, default_agent }),
+    });
+  }  
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
   return apiFetch("/login", {

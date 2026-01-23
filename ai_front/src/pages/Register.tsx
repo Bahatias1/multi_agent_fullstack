@@ -31,7 +31,7 @@ export default function Register({ onBack, onGoLogin, onRegistered }: Props) {
     setLoading(true);
     try {
       // 1) register
-      await register(email.trim(), password);
+      await register(email.trim(), password, service);
 
       // 2) auto-login
       const data = await login(email.trim(), password);

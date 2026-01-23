@@ -1,10 +1,13 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Literal
+
+AgentName = Literal["auto", "backend", "frontend", "devops", "writer"]
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
+    default_agent: AgentName = "auto"
 
 
 class LoginRequest(BaseModel):
@@ -15,8 +18,12 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    session_id: Optional[str] = None
 
 
-class MeResponse(BaseModel):
+class ProfileResponse(BaseModel):
     email: EmailStr
+    default_agent: AgentName
+
+
+class UpdateProfileRequest(BaseModel):
+    default_agent: AgentName

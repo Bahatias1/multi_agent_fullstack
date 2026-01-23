@@ -61,6 +61,71 @@ def clean_output(text: str) -> str:
     if not text:
         return text
 
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if not lines:
+        return text.strip()
+
+    bad_prefixes = [
+        "bonjour",
+        "salut",
+        "hello",
+        "coucou",
+        "bonsoir",
+        "je suis",
+        "en tant qu",
+        "avec plaisir",
+        "bien sûr",
+        "bien sur",
+        "d'accord",
+        "ok",
+        "certainement",
+        "bienvenue",
+        "que voulez-vous",
+        "que veux-tu",
+        "comment puis-je",
+        "comment je peux",
+        "je peux",
+        "laissez-moi",
+        "laisse-moi",
+    ]
+
+    # Supprimer les lignes de démarrage "parasites"
+    while lines:
+        low = lines[0].lower()
+        if any(low.startswith(x) for x in bad_prefixes):
+            lines.pop(0)
+            continue
+        # supprimer aussi si la ligne commence par "Agent:" ou "AI:"
+        if low.startswith("agent:") or low.startswith("ai:") or low.startswith("assistant:"):
+            lines.pop(0)
+            continue
+        break
+
+    cleaned = "\n".join(lines).strip()
+
+    # Si ça finit par une question du modèle, on coupe
+    endings_to_remove = [
+        "que voulez-vous que je réponde",
+        "que veux-tu que je réponde",
+        "voulez-vous que je continue",
+        "souhaitez-vous que je continue",
+        "comment puis-je vous aider",
+        "comment je peux t'aider",
+    ]
+
+    low_cleaned = cleaned.lower()
+    for end in endings_to_remove:
+        if end in low_cleaned:
+            # on garde uniquement avant la phrase parasite
+            idx = low_cleaned.find(end)
+            cleaned = cleaned[:idx].strip()
+            break
+
+    return cleaned if cleaned else text.strip()
+
+    if not text:
+        return text
+
     bad_starts = [
         "bonjour!",
         "salut",
@@ -159,7 +224,7 @@ Question :
         raise HTTPException(status_code=500, detail=f"Ollama error: {repr(e)}")
 
     result = clean_output(result)
-
+    
     add_to_session(session_id, f"USER: {request.prompt.strip()}")
     add_to_session(session_id, f"AI: {result.strip()}")
 
