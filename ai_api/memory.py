@@ -1,8 +1,7 @@
+# ai_api/memory.py
 import uuid
 from typing import Dict, List
 
-# Mémoire en RAM (simple)
-# Tu pourras remplacer par SQLite plus tard
 _sessions: Dict[str, List[str]] = {}
 
 
@@ -28,4 +27,4 @@ def get_session_messages(session_id: str) -> List[str]:
 
 def get_session_history(session_id: str) -> str:
     msgs = _sessions.get(session_id, [])
-    return "\n".join(msgs[-20:])  # garde les 20 derniers
+    return "\n".join(msgs[-20:])

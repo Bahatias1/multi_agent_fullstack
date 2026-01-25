@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from ai_api.schemas import BuildRequest, BuildResponse
 from ai_api.auth.routes import router as auth_router
 from ai_api.auth.routes import get_current_user_email
-from ai_api.code_agent import run_code_agent
 
 from ai_api.schemas import (
     GenerateRequest,
@@ -72,6 +71,10 @@ app.add_middleware(
 )
 
 
+# =========================
+# 🔹 JSON helpers
+# =========================
+
 def extract_json_block(text: str) -> dict:
     """
     Extrait le premier objet JSON valide trouvé dans un texte.
@@ -80,25 +83,57 @@ def extract_json_block(text: str) -> dict:
     if not text:
         raise ValueError("Réponse vide du modèle")
 
-    # 1) si bloc ```json ... ```
+    # 1) bloc ```json ... ```
     m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
     if m:
         return json.loads(m.group(1))
 
-    # 2) sinon chercher le premier {...} qui ressemble à du JSON
+    # 2) sinon chercher le premier {...}
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
-        candidate = text[start : end + 1]
+        candidate = text[start:end + 1]
         return json.loads(candidate)
 
     raise ValueError("JSON non trouvé dans la réponse du modèle")
 
 
+def repair_json_loose(text: str) -> str:
+    """
+    Répare les erreurs JSON classiques :
+    - clés sans guillemets -> "key":
+    - quotes simples -> quotes doubles
+    """
+    if not text:
+        return text
+
+    # garder seulement la zone JSON
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end + 1]
+
+    # remplacer quotes simples par doubles
+    text = re.sub(r"(?<!\\)'", '"', text)
+
+    # ajouter quotes aux clés non-quotées: summary: -> "summary":
+    text = re.sub(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:', r'\1"\2":', text)
+
+    return text
+
+
+# =========================
+# 🔹 Startup
+# =========================
+
 @app.on_event("startup")
 def on_startup():
     init_db()
 
+
+# =========================
+# 🔹 Utils output
+# =========================
 
 def estimate_tokens(text: str) -> int:
     return int(len(text.split()) * 1.3)
@@ -167,7 +202,10 @@ def clean_output(text: str) -> str:
     return cleaned if cleaned else text.strip()
 
 
-# ✅ Healthcheck
+# =========================
+# 🔹 Healthcheck
+# =========================
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -242,6 +280,7 @@ def update_profile(
 # =========================
 # 🔹 /generate (JWT requis)
 # =========================
+
 @app.post("/generate", response_model=GenerateResponse)
 def generate_text(
     request: GenerateRequest,
@@ -303,6 +342,7 @@ Question :
 # =========================
 # 🔹 /continue (JWT requis)
 # =========================
+
 @app.post("/continue", response_model=GenerateResponse)
 def continue_text(
     request: ContinueRequest,
@@ -360,6 +400,7 @@ Continue.
 # =========================
 # 🔹 /orchestrate (JWT requis)
 # =========================
+
 @app.post("/orchestrate", response_model=OrchestrateResponse)
 def orchestrate(
     request: OrchestrateRequest,
@@ -415,6 +456,7 @@ Demande :
 # =========================
 # 🔹 tools (JWT requis)
 # =========================
+
 @app.get("/tools")
 def tools(email: str = Depends(get_current_user_email)):
     return {"tools": TOOLS}
@@ -466,7 +508,7 @@ def files_delete(
 
 
 # =========================
-# 🔹 /build (JWT requis)
+# 🔹 /build (JWT requis) - STABLE (sans CodeAgent)
 # =========================
 
 @app.post("/build", response_model=BuildResponse)
@@ -489,29 +531,19 @@ def build_code(
 
     history = get_session_history(session_id)
 
-    # =========================
-    # 1) Essai CodeAgent (smolagents)
-    # =========================
-    try:
-        payload = run_code_agent(
-            prompt=f"{request.prompt}\n\nContexte:\n{history}",
-            agent_name=agent,
-            language=request.language,
-        )
-    except Exception as e:
-        # =========================
-        # 2) Fallback Ollama normal + extract_json_block
-        # =========================
-        system_prompt = f"""
-Tu es un agent de génération de code.
+    system_prompt = f"""
+Tu es un agent de génération de code (style Cursor/Bolt).
+
+OBJECTIF:
+Générer des fichiers complets pour un projet.
 
 RÈGLES STRICTES :
-- Tu dois répondre uniquement en JSON valide.
-- Aucun texte hors JSON.
-- Le JSON doit contenir :
+- Réponds UNIQUEMENT en JSON valide (double quotes obligatoires)
+- Aucun texte hors JSON
+- Le JSON doit contenir exactement :
   - "summary": string
   - "files": liste d'objets {{"path": "...", "content": "..."}}
-- Les fichiers doivent être propres et complets.
+- Les fichiers doivent être complets et propres.
 - Langue du résumé : {request.language}
 
 FORMAT EXACT :
@@ -523,34 +555,39 @@ FORMAT EXACT :
 }}
 """.strip()
 
-        full_prompt = f"""
+    full_prompt = f"""
 {system_prompt}
 
 Contexte utile :
 {history}
 
+Agent sélectionné: {agent}
+
 Demande :
 {request.prompt}
 """.strip()
 
-        try:
-            raw = generate(prompt=full_prompt, max_tokens=max_tokens)
-        except Exception as ex:
-            raise HTTPException(status_code=500, detail=f"Ollama error: {repr(ex)}")
+    try:
+        raw = generate(prompt=full_prompt, max_tokens=max_tokens)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ollama error: {repr(e)}")
 
-        raw = clean_output((raw or "").strip())
+    raw = (raw or "").strip()
 
+    # 1) extraction JSON direct
+    try:
+        payload = extract_json_block(raw)
+    except Exception:
+        # 2) tentative de réparation JSON
         try:
-            payload = extract_json_block(raw)
-        except Exception as ex:
+            fixed = repair_json_loose(raw)
+            payload = json.loads(fixed)
+        except Exception as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Réponse non-JSON / invalide (CodeAgent + fallback échoués): {str(ex)} | CodeAgent err: {repr(e)}"
+                detail=f"Réponse non-JSON / invalide: {str(e)}"
             )
 
-    # =========================
-    # Validation payload
-    # =========================
     summary = str(payload.get("summary", "")).strip()
     files = payload.get("files", [])
 

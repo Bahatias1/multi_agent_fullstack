@@ -5,8 +5,12 @@ import re
 
 from smolagents import CodeAgent, tool
 
-from ai_api.ollama_client import generate
+from ai_api.ollama_client import generate as ollama_generate
 
+
+# =========================
+# 🔹 Helpers JSON
+# =========================
 
 def _safe_str(x: Any) -> str:
     try:
@@ -23,16 +27,16 @@ def extract_json_block(text: str) -> dict:
     if not text:
         raise ValueError("Réponse vide du modèle")
 
-    # 1) bloc ```json ... ```
+    # bloc ```json ... ```
     m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
     if m:
         return json.loads(m.group(1))
 
-    # 2) sinon premier {...}
+    # sinon premier {...}
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
-        candidate = text[start : end + 1]
+        candidate = text[start:end + 1]
         return json.loads(candidate)
 
     raise ValueError("JSON non trouvé dans la réponse du modèle")
@@ -47,33 +51,37 @@ def repair_json_loose(text: str) -> str:
     if not text:
         return text
 
-    # garder seulement la zone JSON
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
-        text = text[start : end + 1]
+        text = text[start:end + 1]
 
-    # remplacer quotes simples par doubles (cas fréquent)
+    # quotes simples -> doubles
     text = re.sub(r"(?<!\\)'", '"', text)
 
-    # ajouter quotes aux clés non-quotées: summary: -> "summary":
-    # marche pour des clés simples (letters, numbers, underscore)
+    # ajouter quotes aux clés non quotées
     text = re.sub(r'([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:', r'\1"\2":', text)
 
     return text
 
 
+# =========================
+# 🔹 LLM wrapper (smolagents compatible)
+# =========================
+
 class OllamaLLM:
     """
-    Wrapper compatible smolagents.
-
-    smolagents peut appeler:
-    - model.generate(prompt="...")
-    - model.generate(messages=[...])
+    smolagents attend un objet avec .generate(...)
+    et peut envoyer:
+    - prompt="..."
+    - messages=[ChatMessage, ...]
     """
 
     def generate(self, prompt: Union[str, Any] = None, messages: Any = None, **kwargs) -> str:
-        max_tokens = min(int(kwargs.get("max_tokens", 512)), 1024)
+        max_tokens = int(kwargs.get("max_tokens", 900))
+        max_tokens = max(64, min(max_tokens, 1024))  # évite les gros timeouts
+
+        final_prompt = ""
 
         # 1) prompt string direct
         if isinstance(prompt, str) and prompt.strip():
@@ -87,65 +95,71 @@ class OllamaLLM:
         elif prompt is not None:
             final_prompt = self._messages_to_text(prompt)
 
-        else:
-            final_prompt = ""
-
         if not final_prompt.strip():
             return ""
 
-        return generate(prompt=final_prompt, max_tokens=max_tokens)
+        return ollama_generate(prompt=final_prompt, max_tokens=max_tokens)
 
     def _messages_to_text(self, messages: Any) -> str:
-        """
-        Convertit tout type de messages en texte:
-        - list[ChatMessage]
-        - list[str]
-        - ChatMessage
-        - str
-        """
-        # si c'est déjà une string
+        # déjà string
         if isinstance(messages, str):
             return messages.strip()
 
-        # si c'est une liste
+        # liste
         if isinstance(messages, list):
             parts = []
             for m in messages:
-                # si l'élément est une string
                 if isinstance(m, str):
                     parts.append(m.strip())
                     continue
 
-                # sinon objet style ChatMessage
                 role = getattr(m, "role", "user")
                 content = getattr(m, "content", None)
 
+                # parfois c'est déjà un dict ou un truc non standard
                 if content is None:
-                    content = _safe_str(m)
+                    if isinstance(m, dict):
+                        role = m.get("role", role)
+                        content = m.get("content", "")
+                    else:
+                        content = _safe_str(m)
 
                 parts.append(f"{str(role).upper()}: {content}")
             return "\n".join([p for p in parts if p]).strip()
 
-        # si c'est un objet ChatMessage seul
+        # objet unique
         role = getattr(messages, "role", "user")
         content = getattr(messages, "content", None)
+
         if content is None:
-            content = _safe_str(messages)
+            if isinstance(messages, dict):
+                role = messages.get("role", role)
+                content = messages.get("content", "")
+            else:
+                content = _safe_str(messages)
 
         return f"{str(role).upper()}: {content}".strip()
 
 
+# =========================
+# 🔹 Tool smolagents
+# =========================
+
 @tool
 def create_file_tool(path: str, content: str) -> Dict[str, Any]:
     """
-    Crée un fichier.
+    Crée une instruction de fichier.
 
     Args:
-        path: Chemin relatif du fichier (ex: "src/main.py").
-        content: Contenu complet du fichier.
+        path: Chemin relatif du fichier (ex: "src/main.py")
+        content: Contenu complet du fichier
     """
     return {"path": path, "content": content}
 
+
+# =========================
+# 🔹 Runner
+# =========================
 
 def run_code_agent(prompt: str, agent_name: str = "auto", language: str = "français") -> Dict[str, Any]:
     """
@@ -155,7 +169,6 @@ def run_code_agent(prompt: str, agent_name: str = "auto", language: str = "fran�
       "files": [{"path": "...", "content": "..."}]
     }
     """
-
     llm = OllamaLLM()
 
     agent = CodeAgent(
@@ -190,27 +203,25 @@ Demande utilisateur:
 {prompt}
 """.strip()
 
-    raw = str(raw) if not isinstance(raw, (dict, str)) else raw
+    raw = agent.run(instruction)
 
-    # si smolagents renvoie déjà un dict
+    # si dict direct
     if isinstance(raw, dict):
         return raw
 
-    # si smolagents renvoie une string
-    if isinstance(raw, str):
-        raw = raw.strip()
+    # si string
+    raw_text = raw if isinstance(raw, str) else _safe_str(raw)
+    raw_text = (raw_text or "").strip()
 
-        # 1) essayer extraction JSON direct
-        try:
-            return extract_json_block(raw)
-        except Exception:
-            pass
+    # 1) extraction JSON direct
+    try:
+        return extract_json_block(raw_text)
+    except Exception:
+        pass
 
-        # 2) tenter réparation JSON puis parse
-        fixed = repair_json_loose(raw)
-        try:
-            return json.loads(fixed)
-        except Exception as e:
-            raise ValueError(f"CodeAgent JSON invalide après réparation: {str(e)}")
-
-    raise ValueError("Réponse CodeAgent invalide (ni dict ni str)")
+    # 2) réparation JSON
+    fixed = repair_json_loose(raw_text)
+    try:
+        return json.loads(fixed)
+    except Exception as e:
+        raise ValueError(f"CodeAgent JSON invalide après réparation: {str(e)}")

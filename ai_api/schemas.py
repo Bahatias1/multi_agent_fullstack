@@ -1,10 +1,11 @@
+# ai_api/schemas.py
 from pydantic import BaseModel
-from typing import Optional, Literal
-from ai_api.db import SessionLocal
-from ai_api.models import User
-from ai_api.auth.schemas import ProfileResponse, UpdateProfileRequest
+from typing import Optional, Literal, List
 
 
+# =========================
+# 🔹 GENERATE / CONTINUE
+# =========================
 
 class GenerateRequest(BaseModel):
     prompt: str
@@ -26,6 +27,10 @@ class GenerateResponse(BaseModel):
     session_id: str
 
 
+# =========================
+# 🔹 ORCHESTRATE
+# =========================
+
 class OrchestrateRequest(BaseModel):
     prompt: str
     agent: Literal["auto", "backend", "frontend", "devops", "writer"] = "auto"
@@ -40,6 +45,11 @@ class OrchestrateResponse(BaseModel):
     truncated: bool = False
     session_id: str
 
+
+# =========================
+# 🔹 FILES
+# =========================
+
 class CreateFileRequest(BaseModel):
     path: str
     content: str
@@ -51,31 +61,36 @@ class CreateFileResponse(BaseModel):
 
 
 class ListFilesResponse(BaseModel):
-    files: list[str]
+    files: List[str]
 
-# ai_api/schemas.py
-from pydantic import BaseModel
 
 class ReadFileRequest(BaseModel):
     path: str
+
 
 class ReadFileResponse(BaseModel):
     ok: bool = True
     path: str
     content: str
 
+
 class DeleteFileRequest(BaseModel):
     path: str
+
 
 class DeleteFileResponse(BaseModel):
     ok: bool = True
     path: str
 
-from typing import List
+
+# =========================
+# 🔹 BUILD
+# =========================
 
 class BuildFile(BaseModel):
     path: str
     content: str
+
 
 class BuildRequest(BaseModel):
     prompt: str
@@ -83,6 +98,7 @@ class BuildRequest(BaseModel):
     language: str = "français"
     max_tokens: int = 900
     session_id: Optional[str] = None
+
 
 class BuildResponse(BaseModel):
     ok: bool = True
