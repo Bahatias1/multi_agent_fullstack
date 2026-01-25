@@ -43,6 +43,12 @@ export function clearAuth() {
   localStorage.removeItem(SESSION_KEY);
 }
 
+/* =========================
+   ✅ TYPES
+   ========================= */
+
+export type AgentName = "auto" | "backend" | "frontend" | "devops" | "writer";
+
 export type LoginResponse = {
   access_token: string;
   token_type: string;
@@ -64,21 +70,63 @@ export type SessionDetailResponse = {
   messages: string[];
 };
 
+export type OrchestrateResponse = {
+  agent: string;
+  result: string;
+  truncated: boolean;
+  session_id: string;
+};
+
+export type Tool = {
+  id: string;
+  name: string;
+  description: string;
+  capabilities: string[];
+};
+
+export type CreateFileResponse = {
+  ok: boolean;
+  path: string;
+};
+
+export type ListFilesResponse = {
+  files: string[];
+};
+
+export type ReadFileResponse = {
+  ok: boolean;
+  path: string;
+  content: string;
+};
+
+export type ProfileResponse = {
+  email: string;
+  default_agent: AgentName;
+};
+
+export type BuildResponse = {
+  ok: boolean;
+  session_id: string;
+  agent: string;
+  summary: string;
+  files_created: string[];
+};
+
 /* =========================
    ✅ AUTH
    ========================= */
 
-   export async function register(
-    email: string,
-    password: string,
-    default_agent: AgentName = "auto"
-  ): Promise<{ ok: boolean }> {
-    return apiFetch("/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, default_agent }),
-    });
-  }  
+export async function register(
+  email: string,
+  password: string,
+  default_agent: AgentName = "auto"
+): Promise<{ ok: boolean }> {
+  return apiFetch("/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password, default_agent }),
+  });
+}
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
   return apiFetch("/login", {
@@ -164,15 +212,6 @@ export async function getSessionDetail(
    ✅ ORCHESTRATE (AGENTS)
    ========================= */
 
-export type AgentName = "auto" | "backend" | "frontend" | "devops" | "writer";
-
-export type OrchestrateResponse = {
-  agent: string;
-  result: string;
-  truncated: boolean;
-  session_id: string;
-};
-
 export async function orchestrate(
   token: string,
   prompt: string,
@@ -195,13 +234,6 @@ export async function orchestrate(
    ✅ TOOLS
    ========================= */
 
-export type Tool = {
-  id: string;
-  name: string;
-  description: string;
-  capabilities: string[];
-};
-
 export async function getTools(token: string): Promise<{ tools: Tool[] }> {
   return apiFetch("/tools", {
     method: "GET",
@@ -214,15 +246,6 @@ export async function getTools(token: string): Promise<{ tools: Tool[] }> {
 /* =========================
    ✅ FILES ACTIONS
    ========================= */
-
-export type CreateFileResponse = {
-  ok: boolean;
-  path: string;
-};
-
-export type ListFilesResponse = {
-  files: string[];
-};
 
 export async function createFile(
   token: string,
@@ -248,13 +271,46 @@ export async function listFiles(token: string): Promise<ListFilesResponse> {
   });
 }
 
-export type ProfileResponse = {
-  email: string;
-  default_agent: AgentName;
-};
+export async function readFile(token: string, path: string): Promise<ReadFileResponse> {
+  return apiFetch("/files/read", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ path }),
+  });
+}
+
+export async function deleteFile(
+  token: string,
+  path: string
+): Promise<{ ok: boolean; path: string }> {
+  return apiFetch("/files/delete", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ path }),
+  });
+}
+
+/* =========================
+   ✅ PROFILE / ME
+   ========================= */
 
 export async function getProfile(token: string): Promise<ProfileResponse> {
   return apiFetch("/profile", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
+export async function getMe(token: string): Promise<ProfileResponse> {
+  return apiFetch("/me", {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -267,7 +323,7 @@ export async function updateProfile(
   default_agent: AgentName
 ): Promise<ProfileResponse> {
   return apiFetch("/profile", {
-    method: "POST",
+    method: "PUT",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
@@ -276,30 +332,24 @@ export async function updateProfile(
   });
 }
 
-export type ReadFileResponse = {
-  ok: boolean;
-  path: string;
-  content: string;
-};
+/* =========================
+   ✅ BUILD (Cursor/Bolt)
+   ========================= */
 
-export async function readFile(token: string, path: string): Promise<ReadFileResponse> {
-  return apiFetch("/files/read", {
+export async function buildProject(
+  token: string,
+  prompt: string,
+  agent: AgentName,
+  language: string,
+  max_tokens: number,
+  session_id?: string | null
+): Promise<BuildResponse> {
+  return apiFetch("/build", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ path }),
-  });
-}
-
-export async function deleteFile(token: string, path: string): Promise<{ ok: boolean; path: string }> {
-  return apiFetch("/files/delete", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ prompt, agent, language, max_tokens, session_id }),
   });
 }

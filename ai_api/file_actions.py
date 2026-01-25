@@ -61,3 +61,17 @@ def list_files() -> list[str]:
             full = Path(root) / f
             out.append(str(full.relative_to(WORKSPACE_DIR)).replace("\\", "/"))
     return sorted(out)
+
+def read_file(relative_path: str) -> str:
+    p = safe_path(relative_path)
+    if not p.exists():
+        raise FileNotFoundError("Fichier introuvable")
+    return p.read_text(encoding="utf-8")
+
+
+def delete_file(relative_path: str) -> str:
+    p = safe_path(relative_path)
+    if not p.exists():
+        raise FileNotFoundError("Fichier introuvable")
+    p.unlink()
+    return str(p)

@@ -60,17 +60,30 @@ def get_current_user_email(token: str = Depends(oauth2_scheme)):
 
 
 @router.get("/me", response_model=ProfileResponse)
-def me(email: str = Depends(get_current_user_email)):
-    return ProfileResponse(email=email)
-
-@router.get("/profile", response_model=ProfileResponse)
-def get_profile(
+def me(
     email: str = Depends(get_current_user_email),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.email == email).first()
     if not user:
-        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return ProfileResponse(email=user.email, default_agent=user.default_agent)
+
+
+@router.put("/profile", response_model=ProfileResponse)
+def update_profile(
+    payload: UpdateProfileRequest,
+    email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.default_agent = payload.default_agent
+    db.commit()
+    db.refresh(user)
 
     return ProfileResponse(email=user.email, default_agent=user.default_agent)
 

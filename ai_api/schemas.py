@@ -70,3 +70,23 @@ class DeleteFileRequest(BaseModel):
 class DeleteFileResponse(BaseModel):
     ok: bool = True
     path: str
+
+from typing import List
+
+class BuildFile(BaseModel):
+    path: str
+    content: str
+
+class BuildRequest(BaseModel):
+    prompt: str
+    agent: Literal["auto", "backend", "frontend", "devops", "writer"] = "auto"
+    language: str = "français"
+    max_tokens: int = 900
+    session_id: Optional[str] = None
+
+class BuildResponse(BaseModel):
+    ok: bool = True
+    session_id: str
+    agent: str
+    summary: str
+    files_created: List[str] = []

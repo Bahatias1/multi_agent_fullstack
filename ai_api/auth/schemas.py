@@ -1,3 +1,4 @@
+# ai_api/auth/schemas.py
 from pydantic import BaseModel, EmailStr
 from typing import Literal
 
@@ -20,10 +21,10 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-class ProfileResponse(BaseModel):
-    email: EmailStr
+class UpdateProfileRequest(BaseModel):
     default_agent: AgentName
 
 
-class UpdateProfileRequest(BaseModel):
+class ProfileResponse(BaseModel):
+    email: EmailStr
     default_agent: AgentName

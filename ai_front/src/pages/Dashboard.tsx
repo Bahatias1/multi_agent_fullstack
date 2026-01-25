@@ -2,6 +2,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   AgentName,
+  BuildResponse,
+  buildProject,
   clearAuth,
   continueText,
   createNewSession,
@@ -51,7 +53,7 @@ export default function Dashboard({ onLogout }: Props) {
 
   const [agent, setAgent] = useState<AgentName>("auto");
   const [language] = useState("français");
-  const [maxTokens] = useState(512);
+  const [maxTokens] = useState(900);
 
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -59,6 +61,9 @@ export default function Dashboard({ onLogout }: Props) {
   const [tools, setTools] = useState<
     { id: string; name: string; description: string; capabilities: string[] }[]
   >([]);
+
+  // Phase 5 (Cursor/Bolt mode)
+  const [buildInfo, setBuildInfo] = useState<BuildResponse | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -104,6 +109,7 @@ export default function Dashboard({ onLogout }: Props) {
       setSessionId(s.session_id);
 
       setMessages([]);
+      setBuildInfo(null);
 
       const list = await getSessions(token);
       setSessions(list.sessions || []);
@@ -130,6 +136,7 @@ export default function Dashboard({ onLogout }: Props) {
         .filter((m) => Boolean(m.text));
 
       setMessages(chat);
+      setBuildInfo(null);
     } catch (e: any) {
       setError(e?.message || "Erreur load session");
     } finally {
@@ -143,6 +150,7 @@ export default function Dashboard({ onLogout }: Props) {
 
     setError("");
     setLoading(true);
+    setBuildInfo(null);
 
     const userMsg: ChatMessage = { role: "user", text: prompt.trim() };
     setMessages((prev) => [...prev, userMsg]);
@@ -169,6 +177,52 @@ export default function Dashboard({ onLogout }: Props) {
       setPrompt("");
     } catch (e: any) {
       setError(e?.message || "Erreur orchestrate");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleBuild() {
+    if (!tokenOk) return setError("Token manquant. Reconnecte-toi.");
+    if (!prompt.trim()) return setError("Prompt vide.");
+
+    setError("");
+    setLoading(true);
+
+    const userMsg: ChatMessage = { role: "user", text: `BUILD: ${prompt.trim()}` };
+    setMessages((prev) => [...prev, userMsg]);
+
+    try {
+      const data = await buildProject(
+        token,
+        prompt.trim(),
+        agent,
+        language,
+        maxTokens,
+        sessionId || null
+      );
+
+      setSessionIdState(data.session_id);
+      setSessionId(data.session_id);
+
+      setBuildInfo(data);
+
+      const aiMsg: ChatMessage = {
+        role: "ai",
+        agent: data.agent,
+        text:
+          `✅ BUILD terminé.\n\n` +
+          `Résumé: ${data.summary || "—"}\n` +
+          `Fichiers: ${(data.files_created || []).length}`,
+      };
+      setMessages((prev) => [...prev, aiMsg]);
+
+      const list = await getSessions(token);
+      setSessions(list.sessions || []);
+
+      setPrompt("");
+    } catch (e: any) {
+      setError(e?.message || "Erreur build");
     } finally {
       setLoading(false);
     }
@@ -314,7 +368,9 @@ export default function Dashboard({ onLogout }: Props) {
           {/* RIGHT: Chat */}
           <div style={styles.panel}>
             <div style={styles.panelTitle}>Chat</div>
-            <div style={styles.panelSub}>Envoie un prompt, l’agent répond dans la même session.</div>
+            <div style={styles.panelSub}>
+              Send = réponse normale. Build = génération fichiers (Cursor/Bolt mode).
+            </div>
 
             <div style={styles.chatBox}>
               {messages.length === 0 ? (
@@ -331,6 +387,36 @@ export default function Dashboard({ onLogout }: Props) {
               )}
             </div>
 
+            {/* Build results */}
+            {buildInfo ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={styles.panelTitle}>Build Output</div>
+                <div style={styles.buildCard}>
+                  <div style={styles.buildRow}>
+                    <span style={styles.buildLabel}>Agent</span>
+                    <span style={styles.buildValue}>{buildInfo.agent}</span>
+                  </div>
+                  <div style={styles.buildRow}>
+                    <span style={styles.buildLabel}>Résumé</span>
+                    <span style={styles.buildValue}>{buildInfo.summary || "—"}</span>
+                  </div>
+                  <div style={{ height: 10 }} />
+                  <div style={styles.buildLabel}>Fichiers créés</div>
+                  <div style={styles.buildFilesBox}>
+                    {(buildInfo.files_created || []).length === 0 ? (
+                      <div style={styles.muted}>Aucun fichier.</div>
+                    ) : (
+                      buildInfo.files_created.map((p) => (
+                        <div key={p} style={styles.fileItem}>
+                          {p}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
             <div style={{ height: 12 }} />
 
             <textarea
@@ -341,6 +427,7 @@ export default function Dashboard({ onLogout }: Props) {
               placeholder="Écris ton prompt ici..."
               onKeyDown={(e) => {
                 if ((e.ctrlKey || e.metaKey) && e.key === "Enter") handleSend();
+                if ((e.ctrlKey || e.metaKey) && e.key === "b") handleBuild();
               }}
             />
 
@@ -350,16 +437,29 @@ export default function Dashboard({ onLogout }: Props) {
               <button style={styles.btnPrimaryBig} onClick={handleSend} disabled={loading}>
                 {loading ? "Envoi..." : "Send"}
               </button>
+
+              <button style={styles.btnBuild} onClick={handleBuild} disabled={loading}>
+                {loading ? "Build..." : "Build"}
+              </button>
+
               <button style={styles.btnGhost} onClick={handleContinue} disabled={loading}>
                 Continue
               </button>
+
               <button
                 style={styles.btnDanger}
-                onClick={() => setMessages([])}
+                onClick={() => {
+                  setMessages([]);
+                  setBuildInfo(null);
+                }}
                 disabled={loading}
               >
                 Clear
               </button>
+            </div>
+
+            <div style={styles.hint}>
+              Raccourcis : <b>Ctrl+Enter</b> = Send • <b>Ctrl+B</b> = Build
             </div>
           </div>
         </div>
@@ -497,6 +597,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
   },
 
+  btnBuild: {
+    padding: "12px 16px",
+    borderRadius: 16,
+    border: "1px solid rgba(34,211,238,0.25)",
+    background: "rgba(34,211,238,0.12)",
+    color: "rgba(34,211,238,0.95)",
+    cursor: "pointer",
+    fontWeight: 950,
+    fontSize: 13,
+  },
+
   btnDanger: {
     padding: "10px 14px",
     borderRadius: 999,
@@ -607,7 +718,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   chatBox: {
-    height: 340,
+    height: 320,
     overflowY: "auto",
     padding: 12,
     borderRadius: 16,
@@ -626,6 +737,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderTopRightRadius: 6,
     background: "rgba(109,124,255,0.16)",
     border: "1px solid rgba(109,124,255,0.25)",
+    whiteSpace: "pre-wrap",
   },
 
   bubbleAI: {
@@ -636,6 +748,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderTopLeftRadius: 6,
     background: "rgba(255,255,255,0.06)",
     border: "1px solid rgba(255,255,255,0.10)",
+    whiteSpace: "pre-wrap",
   },
 
   agentTag: {
@@ -673,4 +786,59 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   muted: { color: "rgba(255,255,255,0.55)", fontSize: 12 },
+
+  buildCard: {
+    padding: 12,
+    borderRadius: 16,
+    border: "1px solid rgba(34,211,238,0.18)",
+    background: "rgba(34,211,238,0.06)",
+  },
+
+  buildRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 10,
+    padding: "6px 0",
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+  },
+
+  buildLabel: {
+    fontSize: 12,
+    fontWeight: 900,
+    color: "rgba(255,255,255,0.70)",
+  },
+
+  buildValue: {
+    fontSize: 12,
+    fontWeight: 800,
+    color: "rgba(255,255,255,0.92)",
+    textAlign: "right",
+  },
+
+  buildFilesBox: {
+    marginTop: 8,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    maxHeight: 140,
+    overflowY: "auto",
+    paddingRight: 6,
+  },
+
+  fileItem: {
+    padding: "8px 10px",
+    borderRadius: 14,
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(0,0,0,0.16)",
+    fontSize: 12,
+    fontWeight: 800,
+    color: "rgba(255,255,255,0.85)",
+    wordBreak: "break-all",
+  },
+
+  hint: {
+    marginTop: 10,
+    fontSize: 12,
+    color: "rgba(255,255,255,0.55)",
+  },
 };

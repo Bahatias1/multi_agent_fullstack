@@ -15,7 +15,7 @@ def generate(prompt: str, max_tokens: int = 512) -> str:
         "options": {"num_predict": max_tokens},
     }
 
-    r = _session.post(OLLAMA_URL, json=payload, timeout=300)
+    r = _session.post(OLLAMA_URL, json=payload, timeout=900)
     r.raise_for_status()
     data = r.json()
     return (data.get("response") or "").strip()

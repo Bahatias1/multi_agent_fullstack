@@ -1,3 +1,4 @@
+# ai_api/models.py
 from sqlalchemy import Column, Integer, String, DateTime
 from datetime import datetime
 
@@ -11,7 +12,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
 
-    # ✅ nouveau champ
+    # agent par défaut
     default_agent = Column(String, default="auto", nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)

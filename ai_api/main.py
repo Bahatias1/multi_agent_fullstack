@@ -1,14 +1,18 @@
 # ai_api/main.py
-
 from ai_api.tools import TOOLS
-from ai_api.schemas import CreateFileRequest, CreateFileResponse, ListFilesResponse
-from ai_api.file_actions import write_file, list_files
+import json
+import re
+import uuid
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy.orm import Session
+
+from ai_api.schemas import BuildRequest, BuildResponse
 from ai_api.auth.routes import router as auth_router
 from ai_api.auth.routes import get_current_user_email
+from ai_api.code_agent import run_code_agent
 
 from ai_api.schemas import (
     GenerateRequest,
@@ -16,22 +20,38 @@ from ai_api.schemas import (
     ContinueRequest,
     OrchestrateRequest,
     OrchestrateResponse,
+    CreateFileRequest,
+    CreateFileResponse,
+    ListFilesResponse,
+    ReadFileRequest,
+    ReadFileResponse,
+    DeleteFileRequest,
+    DeleteFileResponse,
 )
+
+from ai_api.auth.schemas import (
+    ProfileResponse,
+    UpdateProfileRequest,
+)
+
+from ai_api.file_actions import write_file, list_files, read_file, delete_file
 
 from ai_api.agents.orchestrator import pick_agent
 from ai_api.agents.prompts import system_prompt_for
 
 from ai_api.ollama_client import generate
+
 from ai_api.memory import (
     get_session_history,
     add_to_session,
     list_sessions,
     get_session_messages,
-    create_session
+    create_session,
 )
 
 from ai_api.init_db import init_db
-import uuid
+from ai_api.deps import get_db
+from ai_api.models import User
 
 
 app = FastAPI(title="Custom AI API", version="1.0")
@@ -52,6 +72,29 @@ app.add_middleware(
 )
 
 
+def extract_json_block(text: str) -> dict:
+    """
+    Extrait le premier objet JSON valide trouvé dans un texte.
+    Supporte aussi les blocs ```json ... ```
+    """
+    if not text:
+        raise ValueError("Réponse vide du modèle")
+
+    # 1) si bloc ```json ... ```
+    m = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m:
+        return json.loads(m.group(1))
+
+    # 2) sinon chercher le premier {...} qui ressemble à du JSON
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start : end + 1]
+        return json.loads(candidate)
+
+    raise ValueError("JSON non trouvé dans la réponse du modèle")
+
+
 @app.on_event("startup")
 def on_startup():
     init_db()
@@ -62,16 +105,9 @@ def estimate_tokens(text: str) -> int:
 
 
 def clean_output(text: str) -> str:
-    """
-    Nettoyage agressif des sorties modèle:
-    - retire salutations, préfixes "Agent:", "AI:", etc.
-    - retire questions parasites
-    - coupe les phrases de type "Comment puis-je..."
-    """
     if not text:
         return text
 
-    # Nettoyage des lignes vides
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     if not lines:
         return text.strip()
@@ -100,23 +136,18 @@ def clean_output(text: str) -> str:
         "laisse-moi",
     ]
 
-    # Supprimer les lignes de démarrage parasites
     while lines:
         low = lines[0].lower()
-
         if any(low.startswith(x) for x in bad_prefixes):
             lines.pop(0)
             continue
-
         if low.startswith("agent:") or low.startswith("ai:") or low.startswith("assistant:"):
             lines.pop(0)
             continue
-
         break
 
     cleaned = "\n".join(lines).strip()
 
-    # Supprimer phrases parasites en plein milieu
     endings_to_remove = [
         "que voulez-vous que je réponde",
         "que veux-tu que je réponde",
@@ -130,23 +161,6 @@ def clean_output(text: str) -> str:
     for end in endings_to_remove:
         if end in low_cleaned:
             idx = low_cleaned.find(end)
-            cleaned = cleaned[:idx].strip()
-            low_cleaned = cleaned.lower()
-            break
-
-    # Couper si le modèle commence à "interviewer" l'utilisateur
-    kill_phrases = [
-        "comment puis-je",
-        "comment je peux",
-        "qu'est ce que vous aimeriez",
-        "que souhaitez-vous",
-        "veuillez",
-    ]
-
-    low_cleaned = cleaned.lower()
-    for k in kill_phrases:
-        if k in low_cleaned:
-            idx = low_cleaned.find(k)
             cleaned = cleaned[:idx].strip()
             break
 
@@ -178,6 +192,51 @@ def get_sessions(email: str = Depends(get_current_user_email)):
 def get_session_detail(session_id: str, email: str = Depends(get_current_user_email)):
     messages = get_session_messages(session_id)
     return {"session_id": session_id, "messages": messages}
+
+
+# =========================
+# 🔹 PROFILE / ME (JWT requis)
+# =========================
+
+@app.get("/me", response_model=ProfileResponse)
+def me(
+    email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    return ProfileResponse(email=user.email, default_agent=user.default_agent)
+
+
+@app.get("/profile", response_model=ProfileResponse)
+def get_profile(
+    email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    return ProfileResponse(email=user.email, default_agent=user.default_agent)
+
+
+@app.put("/profile", response_model=ProfileResponse)
+def update_profile(
+    payload: UpdateProfileRequest,
+    email: str = Depends(get_current_user_email),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    user.default_agent = payload.default_agent
+    db.commit()
+    db.refresh(user)
+
+    return ProfileResponse(email=user.email, default_agent=user.default_agent)
 
 
 # =========================
@@ -319,16 +378,6 @@ def orchestrate(
     if agent == "auto":
         agent = pick_agent(request.prompt)
 
-    # ✅ si l'utilisateur dit juste "salut", on bloque le blabla
-    small = request.prompt.strip().lower()
-    if small in ["salut", "bonjour", "hello", "yo", "hey", "coucou"]:
-        return OrchestrateResponse(
-            agent=agent,
-            result="TÂCHE MANQUANTE.",
-            truncated=False,
-            session_id=session_id
-        )
-
     history = get_session_history(session_id)
     system_prompt = system_prompt_for(agent, request.language)
 
@@ -363,10 +412,17 @@ Demande :
     )
 
 
+# =========================
+# 🔹 tools (JWT requis)
+# =========================
 @app.get("/tools")
 def tools(email: str = Depends(get_current_user_email)):
     return {"tools": TOOLS}
 
+
+# =========================
+# 🔹 Files (JWT requis)
+# =========================
 
 @app.post("/files/create", response_model=CreateFileResponse)
 def create_file(
@@ -383,3 +439,149 @@ def create_file(
 @app.get("/files", response_model=ListFilesResponse)
 def files(email: str = Depends(get_current_user_email)):
     return ListFilesResponse(files=list_files())
+
+
+@app.post("/files/read", response_model=ReadFileResponse)
+def files_read(
+    payload: ReadFileRequest,
+    email: str = Depends(get_current_user_email),
+):
+    try:
+        content = read_file(payload.path)
+        return ReadFileResponse(ok=True, path=payload.path, content=content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/files/delete", response_model=DeleteFileResponse)
+def files_delete(
+    payload: DeleteFileRequest,
+    email: str = Depends(get_current_user_email),
+):
+    try:
+        delete_file(payload.path)
+        return DeleteFileResponse(ok=True, path=payload.path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# =========================
+# 🔹 /build (JWT requis)
+# =========================
+
+@app.post("/build", response_model=BuildResponse)
+def build_code(
+    request: BuildRequest,
+    email: str = Depends(get_current_user_email)
+):
+    if not request.prompt or not request.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt vide non autorisé")
+
+    session_id = request.session_id or str(uuid.uuid4())
+
+    agent = request.agent
+    if agent == "auto":
+        agent = pick_agent(request.prompt)
+
+    DEFAULT_MAX = 900
+    HARD_MAX = 2048
+    max_tokens = min(request.max_tokens or DEFAULT_MAX, HARD_MAX)
+
+    history = get_session_history(session_id)
+
+    # =========================
+    # 1) Essai CodeAgent (smolagents)
+    # =========================
+    try:
+        payload = run_code_agent(
+            prompt=f"{request.prompt}\n\nContexte:\n{history}",
+            agent_name=agent,
+            language=request.language,
+        )
+    except Exception as e:
+        # =========================
+        # 2) Fallback Ollama normal + extract_json_block
+        # =========================
+        system_prompt = f"""
+Tu es un agent de génération de code.
+
+RÈGLES STRICTES :
+- Tu dois répondre uniquement en JSON valide.
+- Aucun texte hors JSON.
+- Le JSON doit contenir :
+  - "summary": string
+  - "files": liste d'objets {{"path": "...", "content": "..."}}
+- Les fichiers doivent être propres et complets.
+- Langue du résumé : {request.language}
+
+FORMAT EXACT :
+{{
+  "summary": "....",
+  "files": [
+    {{"path": "exemple.txt", "content": "contenu"}}
+  ]
+}}
+""".strip()
+
+        full_prompt = f"""
+{system_prompt}
+
+Contexte utile :
+{history}
+
+Demande :
+{request.prompt}
+""".strip()
+
+        try:
+            raw = generate(prompt=full_prompt, max_tokens=max_tokens)
+        except Exception as ex:
+            raise HTTPException(status_code=500, detail=f"Ollama error: {repr(ex)}")
+
+        raw = clean_output((raw or "").strip())
+
+        try:
+            payload = extract_json_block(raw)
+        except Exception as ex:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Réponse non-JSON / invalide (CodeAgent + fallback échoués): {str(ex)} | CodeAgent err: {repr(e)}"
+            )
+
+    # =========================
+    # Validation payload
+    # =========================
+    summary = str(payload.get("summary", "")).strip()
+    files = payload.get("files", [])
+
+    if not isinstance(files, list) or len(files) == 0:
+        raise HTTPException(status_code=400, detail="Aucun fichier généré par le modèle")
+
+    created_paths: list[str] = []
+
+    for f in files:
+        if not isinstance(f, dict):
+            continue
+
+        path = (f.get("path") or "").strip()
+        content = f.get("content") or ""
+
+        if not path:
+            continue
+
+        saved = write_file(path, content)
+        created_paths.append(saved)
+
+    if len(created_paths) == 0:
+        raise HTTPException(status_code=400, detail="Aucun fichier valide n'a été créé")
+
+    add_to_session(session_id, f"USER: {request.prompt.strip()}")
+    add_to_session(session_id, f"AI({agent}): BUILD {len(created_paths)} files")
+
+    return BuildResponse(
+        ok=True,
+        session_id=session_id,
+        agent=agent,
+        summary=summary,
+        files_created=created_paths
+    )
